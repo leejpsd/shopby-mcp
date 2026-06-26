@@ -88,17 +88,27 @@ claude mcp add shopby-docs-dev -- node "$(pwd)/shopby-mcp.mjs"
 
 | 툴 | 설명 |
 |----|------|
-| `search_apis(query, category?, limit?)` | 자연어로 API 검색. category로 shop/admin/server/internal 좁히기 가능 |
+| `search_apis(query, category?, limit?)` | 자연어로 API 검색. 설명·태그·경로·파라미터에 더해 **응답·요청 바디 필드명**까지 검색. category로 shop/server 좁히기 가능 |
 | `get_api_detail(operationId)` | 특정 API의 필터·경로파라미터·요청바디·응답 스키마 전체 |
 | `index_stats()` | 로드된 스펙 수 / 총 API 개수 |
+
+### 필드 기반 검색
+응답/요청 바디의 필드명·필드설명까지 색인하므로 **"특정 필드가 들어있는 API 찾기"**가 된다:
+
+- "회원 등급(couponAutoSupplying/적립률) 정보 들어있는 API" → 회원등급 API를 잡아냄
+- "슬러그 필드 쓰는 응답 어디야" → 필드명으로 후보가 좁혀짐
+
+정밀하게는 실제 필드명(camelCase)으로, 막연하면 한국어 필드설명으로 검색하면 된다.
 
 ## 동작 원리 (요약)
 
 1. `spec/*.yml` 을 전부 파싱 → 오퍼레이션 1개 = 레코드 1개로 평탄화.
-   각 레코드에 method·path·operationId·tags·summary·description·**parameters(필터)** 포함.
-2. 검색은 한국어 summary/태그설명/operationId/path/파라미터를 가중치로 스코어링하는 키워드 매칭.
+   각 레코드에 method·path·operationId·tags·summary·description·**parameters(필터)**·**응답/요청 필드명** 포함.
+2. 검색은 한국어 summary/태그설명/operationId/path/파라미터/**스키마 필드명**을 가중치로 스코어링하는 키워드 매칭.
    샵바이 스펙의 summary·description이 한국어라서 "장바구니" 같은 한국어 질의가 그대로 먹힌다.
-3. 상세조회 시 `$ref`(`#/components/schemas/...`)를 재귀적으로 해석해 응답 구조까지 펼쳐 보여준다.
+   (가중치: summary·태그설명 5 > operationId 4 > path·태그 3 > description·**필드명** 2 > 파라미터 1)
+3. 검색·상세조회 모두 `$ref`(`#/components/schemas/...`)를 재귀적으로 해석한다.
+   상세조회는 응답 구조까지 펼쳐 보여주고, 색인은 필드명을 평탄화해 담는다.
 
 ## 자동 최신화 (스펙 갱신 대응)
 

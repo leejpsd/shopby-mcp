@@ -61,7 +61,7 @@ async function startupRefresh() {
 await startupRefresh();
 
 // 최신화 후에 인덱스를 로드해야 변경분이 반영된다 (shopby-index 는 import 시점에 spec 을 읽음)
-const { search, getApi, stats } = await import("./shopby-index.mjs");
+const { search, getApi, stats, listTags, listApis } = await import("./shopby-index.mjs");
 
 const server = new McpServer({ name: "shopby-api-docs", version: "1.0.0" });
 
@@ -129,6 +129,34 @@ server.registerTool(
       };
     }
     return { content: [{ type: "text", text: JSON.stringify(d, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  "list_apis",
+  {
+    title: "샵바이 API 목록/브라우징",
+    description:
+      "태그(도메인) 또는 category로 API를 둘러본다. 인자 없이 호출하면 태그 목록(+개수)을 돌려주니 " +
+      "'주문 도메인에 뭐 있어?' '회원으로 뭘 할 수 있어?' 같은 탐색에 사용. tag를 주면 그 도메인의 엔드포인트를 " +
+      "한 줄씩 나열한다(스키마는 안 줌 — 상세는 get_api_detail). 키워드를 모를 때 검색 대신 목록으로 훑는 용도.",
+    inputSchema: {
+      tag: z.string().optional().describe("도메인 태그(부분일치). 예: Order, Member, Brand, Coupon"),
+      category: z.enum(["shop", "server"]).optional().describe("스펙 영역. shop=프론트호출용, server=서버연동"),
+      limit: z.number().int().min(1).max(200).default(50).optional(),
+    },
+  },
+  async ({ tag, category, limit }) => {
+    if (!tag && !category) {
+      const tags = listTags();
+      const lines = tags.map((t) => `${t.tag} (${t.count})`);
+      return { content: [{ type: "text", text: `태그(도메인) ${tags.length}개. tag 인자로 도메인을 지정해 목록을 보세요:\n\n${lines.join("\n")}` }] };
+    }
+    const { total, returned, items } = listApis({ tag, category, limit: limit ?? 50 });
+    if (!total) return { content: [{ type: "text", text: `'${tag ?? category}' 에 해당하는 API 없음.` }] };
+    const lines = items.map((h) => `${h.method} ${h.path}  → ${h.operationId} | ${h.summary} (필터 ${h.filterCount}, ${h.source})`);
+    const more = total > returned ? `\n\n…외 ${total - returned}개 더 있음 (limit 올려 재호출).` : "";
+    return { content: [{ type: "text", text: `'${tag ?? category}' ${total}건${total > returned ? ` (상위 ${returned})` : ""}:\n\n${lines.join("\n")}${more}` }] };
   }
 );
 

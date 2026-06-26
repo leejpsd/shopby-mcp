@@ -89,8 +89,11 @@ claude mcp add shopby-docs-dev -- node "$(pwd)/shopby-mcp.mjs"
 | 툴 | 설명 |
 |----|------|
 | `search_apis(query, category?, limit?)` | 자연어로 API 검색. 설명·태그·경로·파라미터에 더해 **응답·요청 바디 필드명**까지 검색. category로 shop/server 좁히기 가능 |
-| `get_api_detail(operationId)` | 특정 API의 필터·경로파라미터·요청바디·응답 스키마 전체 |
+| `list_apis(tag?, category?, limit?)` | **도메인 브라우징.** 인자 없이 호출하면 태그 목록(+개수), tag를 주면 그 도메인 엔드포인트를 한 줄씩 나열. 키워드를 모를 때 목록으로 훑기 |
+| `get_api_detail(operationId, source?)` | 특정 API의 필터·경로파라미터·요청바디(미디어타입)·응답 스키마 전체. 동일 id가 양쪽에 있으면 `source`로 구분 |
 | `index_stats()` | 로드된 스펙 수 / 총 API 개수 |
+
+> **검색 vs 브라우징**: 키워드가 떠오르면 `search_apis`, "그 도메인에 뭐 있지?" 식으로 훑으려면 `list_apis`. 둘 다 가벼운 목록만 주고, 상세 스키마는 필요할 때 `get_api_detail`로.
 
 ### 필드 기반 검색
 응답/요청 바디의 필드명·필드설명까지 색인하므로 **"특정 필드가 들어있는 API 찾기"**가 된다:

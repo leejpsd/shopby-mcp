@@ -278,5 +278,36 @@ export function stats() {
   return { specs: Object.keys(SPECS).length, operations: INDEX.length };
 }
 
+// ── 5. 브라우징 (태그/카테고리로 둘러보기) ─────────────────
+// 인자 없이 listTags → 도메인 메뉴. listApis(tag/category) → 그 도메인 엔드포인트 목록.
+export function listTags({ category } = {}) {
+  const counts = new Map();
+  for (const r of INDEX) {
+    if (category && !r.source.includes(category)) continue;
+    for (const t of (r.tags.length ? r.tags : ["(no tag)"])) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag, count]) => ({ tag, count }));
+}
+
+export function listApis({ tag, category, limit = 50 } = {}) {
+  let rows = INDEX;
+  if (category) rows = rows.filter((r) => r.source.includes(category));
+  if (tag) {
+    const lt = tag.toLowerCase();
+    rows = rows.filter((r) => r.tags.some((t) => t.toLowerCase().includes(lt)));
+  }
+  const total = rows.length;
+  const items = rows.slice(0, limit).map((r) => ({
+    method: r.method,
+    path: r.path,
+    operationId: r.operationId,
+    summary: r.summary,
+    source: r.source,
+    tags: r.tags,
+    filterCount: r.params.filter((p) => p.in === "query").length,
+  }));
+  return { total, returned: items.length, items };
+}
+
 export { loadAll };
 loadAll();

@@ -133,6 +133,16 @@ function expand(spec, schema, depth = 0, seen = new Set()) {
   return schema;
 }
 
+// content-type 키가 "application/json;charset=UTF-8" 처럼 suffix가 붙을 수 있어 정확 일치로는 놓친다.
+// application/json 계열을 prefix로 우선 찾고, 없으면(multipart/text 등) 첫 타입을 쓴다.
+function pickContent(content) {
+  if (!content || typeof content !== "object") return { mediaType: null, schema: null };
+  const keys = Object.keys(content);
+  const jsonKey = keys.find((k) => k.toLowerCase().startsWith("application/json"));
+  const key = jsonKey ?? keys[0] ?? null;
+  return { mediaType: key, schema: key ? content[key]?.schema ?? null : null };
+}
+
 // ── 3b. 검색 색인용 필드명 수집 ($ref 재귀 해석) ───────────
 // 응답/요청 바디 스키마를 펼쳐 필드명과 필드설명을 평탄한 토큰 배열로 모은다.
 function collectSchemaFields(spec, schema, depth = 0, seen = new Set(), out = []) {
@@ -161,10 +171,10 @@ function collectSchemaFields(spec, schema, depth = 0, seen = new Set(), out = []
 // 한 오퍼레이션의 요청바디 + 모든 응답 스키마 필드를 하나의 검색 문자열로 (중복 제거)
 function schemaFieldText(spec, op) {
   const out = [];
-  const rb = op?.requestBody?.content?.["application/json"]?.schema;
+  const rb = pickContent(op?.requestBody?.content).schema;
   if (rb) collectSchemaFields(spec, rb, 0, new Set(), out);
   for (const res of Object.values(op?.responses ?? {})) {
-    const s = res?.content?.["application/json"]?.schema;
+    const s = pickContent(res?.content).schema;
     if (s) collectSchemaFields(spec, s, 0, new Set(), out);
   }
   return [...new Set(out)].join(" ");
@@ -172,23 +182,42 @@ function schemaFieldText(spec, op) {
 
 // ── 4. 상세 조회 ───────────────────────────────────────────
 export function getApi({ operationId, source, path, method }) {
-  const r = INDEX.find(
-    (x) =>
-      (operationId && x.operationId === operationId) ||
-      (source && path && method && x.source === source && x.path === path && x.method === method.toUpperCase())
-  );
-  if (!r) return null;
+  // operationId 우선. 동일 id가 shop/server 양쪽에 있을 수 있어 후보가 여러 개일 수 있다.
+  let matches = operationId ? INDEX.filter((x) => x.operationId === operationId) : [];
+  // operationId 매치가 없으면 source+path+method 로 조회
+  if (!matches.length && source && path && method)
+    matches = INDEX.filter((x) => x.source === source && x.path === path && x.method === method.toUpperCase());
+  // source 힌트("shop"/"server"/파일명 일부)가 있으면 더 좁힌다
+  if (source && matches.length > 1) {
+    const narrowed = matches.filter((x) => x.source.includes(source));
+    if (narrowed.length) matches = narrowed;
+  }
+  if (!matches.length) return null;
+  // 여전히 모호하면 후보 목록을 돌려 호출측이 source로 구분하게 한다 (엉뚱한 스펙 반환 방지)
+  if (matches.length > 1) {
+    return {
+      ambiguous: true,
+      operationId,
+      candidates: matches.map((m) => ({ method: m.method, path: m.path, source: m.source, summary: m.summary })),
+    };
+  }
+
+  const r = matches[0];
   const spec = SPECS[r.source];
   const op = r._op;
 
   let requestBody = null;
-  const rbSchema = op.requestBody?.content?.["application/json"]?.schema;
-  if (rbSchema) requestBody = expand(spec, rbSchema);
+  const rb = pickContent(op.requestBody?.content);
+  if (rb.schema) requestBody = { mediaType: rb.mediaType, schema: expand(spec, rb.schema) };
 
   const responses = {};
   for (const [code, res] of Object.entries(op.responses ?? {})) {
-    const s = res.content?.["application/json"]?.schema;
-    responses[code] = { description: res.description ?? "", schema: s ? expand(spec, s) : null };
+    const c = pickContent(res.content);
+    responses[code] = {
+      description: res.description ?? "",
+      mediaType: c.mediaType,
+      schema: c.schema ? expand(spec, c.schema) : null,
+    };
   }
 
   return {

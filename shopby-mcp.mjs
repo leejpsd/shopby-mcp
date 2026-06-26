@@ -102,12 +102,32 @@ server.registerTool(
     title: "샵바이 API 상세조회",
     description:
       "operationId로 특정 API의 전체 명세를 조회한다. 필터(쿼리 파라미터)의 이름·타입·필수여부·enum·설명, " +
-      "경로 파라미터, 요청 바디, 응답 스키마를 모두 반환한다. '이 API에 무슨 필터 있어?' 류 질문에 사용.",
-    inputSchema: { operationId: z.string().describe("search_apis 결과의 operationId") },
+      "경로 파라미터, 요청 바디(미디어타입 포함), 응답 스키마를 모두 반환한다. '이 API에 무슨 필터 있어?' 류 질문에 사용. " +
+      "동일 operationId가 shop/server 양쪽에 있으면 후보 목록을 돌려주니 source로 다시 호출할 것.",
+    inputSchema: {
+      operationId: z.string().describe("search_apis 결과의 operationId"),
+      source: z
+        .string()
+        .optional()
+        .describe("동일 operationId가 여러 스펙에 있을 때 구분용. 예: 'shop', 'server', 또는 출처 파일명 일부"),
+    },
   },
-  async ({ operationId }) => {
-    const d = getApi({ operationId });
+  async ({ operationId, source }) => {
+    const d = getApi({ operationId, source });
     if (!d) return { content: [{ type: "text", text: `operationId '${operationId}' 못 찾음.` }] };
+    if (d.ambiguous) {
+      const lines = d.candidates.map((c) => `- ${c.method} ${c.path}  | 출처: ${c.source}  | ${c.summary}`);
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `operationId '${operationId}' 가 여러 스펙에 존재합니다. source 인자로 구분해 다시 호출하세요 ` +
+              `(예: source:"shop" 또는 "server").\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
     return { content: [{ type: "text", text: JSON.stringify(d, null, 2) }] };
   }
 );

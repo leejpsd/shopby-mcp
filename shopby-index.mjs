@@ -66,12 +66,48 @@ function loadAll() {
 }
 
 // ── 2. 키워드 검색 (한국어 summary/description 기반) ─────────
-function tokenize(q) {
-  return q.toLowerCase().split(/[\s,/]+/).filter(Boolean);
+// 도메인 동의어(한↔영). 필드명/경로는 영어, 질의는 한국어인 미스매치를 메운다. 보수적으로 유지.
+const SYNONYMS = {
+  적립금: ["reserve", "accumulation", "point"], 적립: ["reserve", "accumulation"], 포인트: ["point", "reserve"],
+  등급: ["grade"], 회원: ["member"], 회원가입: ["join", "signup", "register"], 가입: ["join", "signup"],
+  탈퇴: ["withdraw", "leave", "expel"], 휴면: ["dormant"],
+  배송: ["delivery", "shipping"], 배송지: ["address", "delivery"], 주소: ["address"],
+  주문: ["order"], 장바구니: ["cart"], 상품: ["product", "goods"], 재고: ["stock", "inventory"], 브랜드: ["brand"],
+  쿠폰: ["coupon"], 결제: ["payment", "pay"], 취소: ["cancel"], 환불: ["refund"],
+  반품: ["return", "claim"], 교환: ["exchange", "claim"], 클레임: ["claim"],
+  카테고리: ["category"], 목록: ["list"], 리스트: ["list"], 조회: ["get", "inquiry"], 검색: ["search"],
+  문의: ["inquiry", "qna"], 찜: ["like", "wish"], 좋아요: ["like"], 배너: ["banner"], 이벤트: ["event"],
+  프로모션: ["promotion"], 할인: ["discount", "sale"], 옵션: ["option"], 리뷰: ["review"], 후기: ["review"],
+  인증: ["auth", "authentication"], 로그인: ["login", "signin", "auth"], 정산: ["settlement"],
+};
+const SYN_ENTRIES = Object.entries(SYNONYMS);
+
+// 질의를 가중치 있는 검색어로 확장: 원어(1.0) + camelCase 분해(0.6) + 동의어 양방향(0.6)
+function expandQuery(q) {
+  const best = new Map(); // term -> weight
+  const add = (term, w) => {
+    term = String(term).toLowerCase();
+    if (term.length < 2) return;
+    if ((best.get(term) ?? 0) < w) best.set(term, w);
+  };
+  for (const word of q.split(/[\s,/]+/).filter(Boolean)) {
+    add(word, 1);
+    const parts = word
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/([A-Za-z])(\d)/g, "$1 $2")
+      .split(/[\s_-]+/)
+      .filter(Boolean);
+    if (parts.length > 1) for (const p of parts) add(p, 0.6); // camelCase/숫자 경계 분해
+    const lw = word.toLowerCase();
+    if (SYNONYMS[lw]) for (const s of SYNONYMS[lw]) add(s, 0.6);
+    for (const [k, vs] of SYN_ENTRIES)
+      if (k === lw || vs.includes(lw)) { add(k, 0.6); for (const s of vs) add(s, 0.6); } // 양방향
+  }
+  return [...best.entries()].map(([term, w]) => ({ term, w }));
 }
 
 export function search(query, { category, limit = 10 } = {}) {
-  const tokens = tokenize(query);
+  const terms = expandQuery(query);
   const scored = [];
   for (const r of INDEX) {
     if (category && !r.source.includes(category)) continue;
@@ -87,15 +123,19 @@ export function search(query, { category, limit = 10 } = {}) {
       { w: 1, t: r.params.map((p) => `${p.name} ${p.description}`).join(" ") },
     ].map((h) => ({ w: h.w, t: (h.t || "").toLowerCase() }));
 
+    // 정규화: 각 검색어는 "가장 강하게 걸린 필드" 점수만 합산 → 한 단어가 여러 필드에 있다고 과대평가 안 함.
+    // 결과적으로 서로 다른 검색어를 더 많이 충족(coverage)하는 API가 상위로 온다.
     let score = 0;
-    for (const tok of tokens) {
-      for (const h of haystacks) if (h.t.includes(tok)) score += h.w;
+    for (const { term, w } of terms) {
+      let best = 0;
+      for (const h of haystacks) if (h.t.includes(term)) best = Math.max(best, h.w * w);
+      score += best;
     }
     if (score > 0) scored.push({ score, r });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map(({ score, r }) => ({
-    score,
+    score: Math.round(score * 10) / 10,
     source: r.source,
     method: r.method,
     path: r.path,

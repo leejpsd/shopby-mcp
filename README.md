@@ -107,6 +107,8 @@ claude mcp add shopby-docs-dev -- node "$(pwd)/shopby-mcp.mjs"
 2. 검색은 한국어 summary/태그설명/operationId/path/파라미터/**스키마 필드명**을 가중치로 스코어링하는 키워드 매칭.
    샵바이 스펙의 summary·description이 한국어라서 "장바구니" 같은 한국어 질의가 그대로 먹힌다.
    (가중치: summary·태그설명 5 > operationId 4 > path·태그 3 > description·**필드명** 2 > 파라미터 1)
+   **recall 보강**: 한↔영 도메인 동의어(적립금↔reserve, 등급↔grade…)와 camelCase 분해(brandNo→brand/no)로
+   한국어 질의가 영어 필드명·경로에도 닿는다. 각 검색어는 가장 강하게 걸린 필드 점수만 합산(정규화)해 더 많은 단어를 충족하는 API가 상위로 온다.
 3. 검색·상세조회 모두 `$ref`(`#/components/schemas/...`)를 재귀적으로 해석한다.
    상세조회는 응답 구조까지 펼쳐 보여주고, 색인은 필드명을 평탄화해 담는다.
 

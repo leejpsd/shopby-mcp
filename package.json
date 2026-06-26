@@ -1,0 +1,54 @@
+{
+  "name": "shopby-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Unofficial MCP server + CLI to search Shopby (NHN Commerce) OpenAPI docs in natural language. 샵바이 API 문서 검색용 MCP 서버.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "shopby",
+    "nhn-commerce",
+    "openapi",
+    "swagger",
+    "api-docs",
+    "claude",
+    "search"
+  ],
+  "license": "MIT",
+  "author": "leejpsd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leejpsd/shopby-mcp.git"
+  },
+  "homepage": "https://github.com/leejpsd/shopby-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/leejpsd/shopby-mcp/issues"
+  },
+  "bin": {
+    "shopby-mcp": "./shopby-mcp.mjs",
+    "shopby-cli": "./shopby-cli.mjs"
+  },
+  "files": [
+    "shopby-mcp.mjs",
+    "shopby-index.mjs",
+    "download-specs.mjs",
+    "cache-paths.mjs",
+    "shopby-cli.mjs",
+    "specs-index.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "download": "node download-specs.mjs",
+    "search": "node shopby-cli.mjs",
+    "mcp": "node shopby-mcp.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.0.0",
+    "zod": "^3.23.0"
+  }
+}

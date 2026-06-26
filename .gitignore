@@ -1,0 +1,14 @@
+# 의존성 / 빌드 산출물
+node_modules/
+*.tgz
+
+# 런타임에 자동 다운로드되는 스펙 (코드가 ~/.cache 로 받음. 저장소엔 불필요)
+spec/
+
+# 로그 / OS / 에디터
+*.log
+.DS_Store
+.vscode/
+
+# 내부 작업 기록 (공개 저장소엔 제외)
+conversation-transcript.md

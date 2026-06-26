@@ -56,6 +56,7 @@ function loadAll() {
           summary: (op.summary ?? "").trim(),
           description: (op.description ?? "").trim(),
           params,
+          schemaFields: schemaFieldText(spec, op), // 응답+요청 바디 필드명·설명 (검색 색인용)
           _op: op, // 상세조회/ref해석용
         });
       }
@@ -82,8 +83,9 @@ export function search(query, { category, limit = 10 } = {}) {
       { w: 3, t: r.path },
       { w: 3, t: r.tags.join(" ") },
       { w: 2, t: r.description },
+      { w: 2, t: r.schemaFields }, // 응답/요청 바디 필드명·설명
       { w: 1, t: r.params.map((p) => `${p.name} ${p.description}`).join(" ") },
-    ].map((h) => ({ w: h.w, t: h.t.toLowerCase() }));
+    ].map((h) => ({ w: h.w, t: (h.t || "").toLowerCase() }));
 
     let score = 0;
     for (const tok of tokens) {
@@ -129,6 +131,43 @@ function expand(spec, schema, depth = 0, seen = new Set()) {
     return { type: "object", properties: props, ...(schema.description ? { description: schema.description } : {}) };
   }
   return schema;
+}
+
+// ── 3b. 검색 색인용 필드명 수집 ($ref 재귀 해석) ───────────
+// 응답/요청 바디 스키마를 펼쳐 필드명과 필드설명을 평탄한 토큰 배열로 모은다.
+function collectSchemaFields(spec, schema, depth = 0, seen = new Set(), out = []) {
+  if (!schema || depth > 6) return out;
+  if (schema.$ref) {
+    if (seen.has(schema.$ref)) return out;
+    seen = new Set(seen).add(schema.$ref);
+    return collectSchemaFields(spec, resolveRef(spec, schema.$ref), depth, seen, out);
+  }
+  if (schema.type === "array" && schema.items)
+    return collectSchemaFields(spec, schema.items, depth + 1, seen, out);
+  if (schema.properties) {
+    for (const [k, v] of Object.entries(schema.properties)) {
+      out.push(k); // 필드명
+      const d = v && typeof v === "object" ? v.description : null;
+      if (d) out.push(String(d)); // 필드 설명(한국어)
+      collectSchemaFields(spec, v, depth + 1, seen, out);
+    }
+  }
+  for (const key of ["allOf", "oneOf", "anyOf"]) {
+    if (Array.isArray(schema[key])) for (const s of schema[key]) collectSchemaFields(spec, s, depth + 1, seen, out);
+  }
+  return out;
+}
+
+// 한 오퍼레이션의 요청바디 + 모든 응답 스키마 필드를 하나의 검색 문자열로 (중복 제거)
+function schemaFieldText(spec, op) {
+  const out = [];
+  const rb = op?.requestBody?.content?.["application/json"]?.schema;
+  if (rb) collectSchemaFields(spec, rb, 0, new Set(), out);
+  for (const res of Object.values(op?.responses ?? {})) {
+    const s = res?.content?.["application/json"]?.schema;
+    if (s) collectSchemaFields(spec, s, 0, new Set(), out);
+  }
+  return [...new Set(out)].join(" ");
 }
 
 // ── 4. 상세 조회 ───────────────────────────────────────────

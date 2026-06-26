@@ -70,7 +70,8 @@ server.registerTool(
   {
     title: "샵바이 API 검색",
     description:
-      "샵바이(Shopby) API를 자연어로 검색한다. 한국어 설명/태그/operationId/경로를 모두 검색한다. " +
+      "샵바이(Shopby) API를 자연어로 검색한다. 한국어 설명/태그/operationId/경로와 응답·요청 바디의 필드명까지 검색한다. " +
+      "'특정 필드가 들어있는 API 찾기'(예: 등급/슬러그/적립률 필드를 쓰는 API)도 가능. " +
       "예: '장바구니 리스트', '브랜드 목록', '주문 취소', '적립금 조회'. " +
       "결과로 method/path/operationId/요약/필터개수를 반환한다. " +
       "상세(필터 목록·요청바디·응답)는 반환된 operationId로 get_api_detail을 호출할 것.",

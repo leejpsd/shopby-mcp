@@ -111,30 +111,32 @@ export function search(query, { category, limit = 10 } = {}) {
   const scored = [];
   for (const r of INDEX) {
     if (category && !r.source.includes(category)) continue;
-    // 검색 대상 텍스트 (가중치를 위해 분리)
+    // 검색 대상 텍스트 (가중치 + 라벨로 분리; 라벨은 '왜 매칭됐는지' 근거 표시용)
     const haystacks = [
-      { w: 5, t: r.summary },
-      { w: 5, t: r.tagDescriptions.join(" ") },
-      { w: 4, t: r.operationId },
-      { w: 3, t: r.path },
-      { w: 3, t: r.tags.join(" ") },
-      { w: 2, t: r.description },
-      { w: 2, t: r.schemaFields }, // 응답/요청 바디 필드명·설명
-      { w: 1, t: r.params.map((p) => `${p.name} ${p.description}`).join(" ") },
-    ].map((h) => ({ w: h.w, t: (h.t || "").toLowerCase() }));
+      { w: 5, label: "요약", t: r.summary },
+      { w: 5, label: "태그설명", t: r.tagDescriptions.join(" ") },
+      { w: 4, label: "operationId", t: r.operationId },
+      { w: 3, label: "경로", t: r.path },
+      { w: 3, label: "태그", t: r.tags.join(" ") },
+      { w: 2, label: "설명", t: r.description },
+      { w: 2, label: "필드명", t: r.schemaFields }, // 응답/요청 바디 필드명·설명
+      { w: 1, label: "파라미터", t: r.params.map((p) => `${p.name} ${p.description}`).join(" ") },
+    ].map((h) => ({ ...h, t: (h.t || "").toLowerCase() }));
 
     // 정규화: 각 검색어는 "가장 강하게 걸린 필드" 점수만 합산 → 한 단어가 여러 필드에 있다고 과대평가 안 함.
     // 결과적으로 서로 다른 검색어를 더 많이 충족(coverage)하는 API가 상위로 온다.
     let score = 0;
+    const hit = new Set();
     for (const { term, w } of terms) {
       let best = 0;
-      for (const h of haystacks) if (h.t.includes(term)) best = Math.max(best, h.w * w);
+      for (const h of haystacks) if (h.t.includes(term)) { best = Math.max(best, h.w * w); hit.add(h.label); }
       score += best;
     }
-    if (score > 0) scored.push({ score, r });
+    // 근거는 가중치 높은 순 상위 3개만 (동의어가 여러 필드에 걸려도 노이즈/토큰 통제)
+    if (score > 0) scored.push({ score, r, matched: haystacks.filter((h) => hit.has(h.label)).map((h) => h.label).slice(0, 3) });
   }
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map(({ score, r }) => ({
+  return scored.slice(0, limit).map(({ score, r, matched }) => ({
     score: Math.round(score * 10) / 10,
     source: r.source,
     method: r.method,
@@ -143,6 +145,7 @@ export function search(query, { category, limit = 10 } = {}) {
     tags: r.tags,
     summary: r.summary,
     filterCount: r.params.filter((p) => p.in === "query").length,
+    matched, // 어느 필드에서 걸렸는지 (요약/필드명/경로 …) — 가중치 높은 순
   }));
 }
 

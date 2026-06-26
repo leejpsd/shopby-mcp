@@ -90,7 +90,8 @@ server.registerTool(
       return { content: [{ type: "text", text: `'${query}' 검색결과 없음. 더 일반적인 키워드로 재시도해보세요.` }] };
     const lines = hits.map(
       (h) =>
-        `${h.method} ${h.path}\n  operationId: ${h.operationId}\n  요약: ${h.summary}\n  태그: ${h.tags.join(", ")} | 필터 ${h.filterCount}개 | 출처: ${h.source}`
+        `${h.method} ${h.path}\n  operationId: ${h.operationId}\n  요약: ${h.summary}\n  태그: ${h.tags.join(", ")} | 필터 ${h.filterCount}개 | 출처: ${h.source}` +
+        (h.matched?.length ? `\n  근거: ${h.matched.join(", ")} 매칭` : "")
     );
     return { content: [{ type: "text", text: `'${query}' 검색결과 ${hits.length}건:\n\n${lines.join("\n\n")}` }] };
   }

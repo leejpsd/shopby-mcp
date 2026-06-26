@@ -48,6 +48,7 @@ if (args[0] === "--detail" || args[0] === "-d") {
   for (const h of hits) {
     console.log(`  [${String(h.score).padStart(2)}] ${h.method.padEnd(6)} ${h.path}`);
     console.log(`       ${h.summary}  → ${h.operationId} (필터 ${h.filterCount}개, ${h.source})`);
+    if (h.matched?.length) console.log(`       근거: ${h.matched.join(", ")} 매칭`);
   }
   console.log(`\n상세보기: node shopby-cli.mjs --detail <operationId>\n`);
 } else {

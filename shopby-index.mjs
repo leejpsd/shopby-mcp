@@ -81,8 +81,13 @@ const SYNONYMS = {
   인증: ["auth", "authentication"], 로그인: ["login", "signin", "auth"], 정산: ["settlement"],
 };
 const SYN_ENTRIES = Object.entries(SYNONYMS);
+// 한글 합성어 분해용 도메인 어휘. 동의어 사전 키 중 구조어(리스트/목록/조회/검색)는 너무 흔해
+// 노이즈가 되므로 합성어 분해에서 제외한다 — "장바구니리스트"에서는 도메인어 '장바구니'만 뽑는다.
+// (구조어는 사용자가 별도 단어로 쳤을 때의 일반 동의어 확장 경로에서는 여전히 동작한다)
+const KO_GENERIC = new Set(["목록", "리스트", "조회", "검색"]);
+const KO_KEYS = Object.keys(SYNONYMS).filter((k) => !KO_GENERIC.has(k));
 
-// 질의를 가중치 있는 검색어로 확장: 원어(1.0) + camelCase 분해(0.6) + 동의어 양방향(0.6)
+// 질의를 가중치 있는 검색어로 확장: 원어(1.0) + camelCase 분해(0.6) + 동의어 양방향(0.6) + 한글 합성어 분해(0.6)
 function expandQuery(q) {
   const best = new Map(); // term -> weight
   const add = (term, w) => {
@@ -102,6 +107,15 @@ function expandQuery(q) {
     if (SYNONYMS[lw]) for (const s of SYNONYMS[lw]) add(s, 0.6);
     for (const [k, vs] of SYN_ENTRIES)
       if (k === lw || vs.includes(lw)) { add(k, 0.6); for (const s of vs) add(s, 0.6); } // 양방향
+    // 한글 합성어: 도메인 어휘가 부분문자열로 들어있으면 그것만 뽑고 영어 동의어도 같이 붙인다(접미사는 제외)
+    if (/[가-힣]/.test(word) && word.length >= 4) {
+      for (const term of KO_KEYS) {
+        if (term.length >= 2 && term !== word && word.includes(term)) {
+          add(term, 0.6);
+          for (const s of SYNONYMS[term]) add(s, 0.5);
+        }
+      }
+    }
   }
   return [...best.entries()].map(([term, w]) => ({ term, w }));
 }
@@ -158,19 +172,28 @@ function resolveRef(spec, ref) {
   return cur;
 }
 
-function expand(spec, schema, depth = 0, seen = new Set()) {
+// ctx.cap = 펼칠 총 필드 수 상한(너비가 큰 주문/클레임 응답이 토큰을 폭주시키는 것 방지).
+function expand(spec, schema, depth = 0, seen = new Set(), ctx = { n: 0, cap: Infinity }) {
   if (!schema || depth > 4) return schema;
   if (schema.$ref) {
     if (seen.has(schema.$ref)) return { $ref: schema.$ref, _circular: true };
     seen = new Set(seen).add(schema.$ref);
-    return expand(spec, resolveRef(spec, schema.$ref), depth, seen);
+    return expand(spec, resolveRef(spec, schema.$ref), depth, seen, ctx);
   }
   if (schema.type === "array" && schema.items)
-    return { type: "array", items: expand(spec, schema.items, depth + 1, seen) };
+    return { type: "array", items: expand(spec, schema.items, depth + 1, seen, ctx) };
   if (schema.properties) {
     const props = {};
-    for (const [k, v] of Object.entries(schema.properties))
-      props[k] = expand(spec, v, depth + 1, seen);
+    const entries = Object.entries(schema.properties);
+    for (let i = 0; i < entries.length; i++) {
+      if (ctx.n >= ctx.cap) {
+        props._truncated = `…(+${entries.length - i}개 필드 생략 — 응답이 큼. 특정 필드는 search_apis로 검색)`;
+        break;
+      }
+      ctx.n++;
+      const [k, v] = entries[i];
+      props[k] = expand(spec, v, depth + 1, seen, ctx);
+    }
     return { type: "object", properties: props, ...(schema.description ? { description: schema.description } : {}) };
   }
   return schema;
@@ -224,7 +247,7 @@ function schemaFieldText(spec, op) {
 }
 
 // ── 4. 상세 조회 ───────────────────────────────────────────
-export function getApi({ operationId, source, path, method }) {
+export function getApi({ operationId, source, path, method, section = "all" } = {}) {
   // operationId 우선. 동일 id가 shop/server 양쪽에 있을 수 있어 후보가 여러 개일 수 있다.
   let matches = operationId ? INDEX.filter((x) => x.operationId === operationId) : [];
   // operationId 매치가 없으면 source+path+method 로 조회
@@ -248,22 +271,10 @@ export function getApi({ operationId, source, path, method }) {
   const r = matches[0];
   const spec = SPECS[r.source];
   const op = r._op;
+  const PROP_CAP = 120; // 응답/요청 바디당 펼칠 필드 상한 (토큰 폭주 방지)
 
-  let requestBody = null;
-  const rb = pickContent(op.requestBody?.content);
-  if (rb.schema) requestBody = { mediaType: rb.mediaType, schema: expand(spec, rb.schema) };
-
-  const responses = {};
-  for (const [code, res] of Object.entries(op.responses ?? {})) {
-    const c = pickContent(res.content);
-    responses[code] = {
-      description: res.description ?? "",
-      mediaType: c.mediaType,
-      schema: c.schema ? expand(spec, c.schema) : null,
-    };
-  }
-
-  return {
+  // 헤더는 항상 가볍게. section 으로 무거운 부분(요청/응답 스키마)만 선택적으로 펼친다.
+  const out = {
     source: r.source,
     method: r.method,
     fullUrl: r.fullUrl,
@@ -271,10 +282,33 @@ export function getApi({ operationId, source, path, method }) {
     tags: r.tags,
     summary: r.summary,
     description: r.description,
-    filters: r.params, // 필터(쿼리 파라미터) 포함 전체 파라미터
-    requestBody,
-    responses,
+    section,
   };
+  const want = (s) => section === "all" || section === s;
+
+  if (want("filters")) out.filters = r.params; // 쿼리/경로 파라미터 (가볍다)
+
+  if (want("request")) {
+    const rb = pickContent(op.requestBody?.content);
+    out.requestBody = rb.schema
+      ? { mediaType: rb.mediaType, schema: expand(spec, rb.schema, 0, new Set(), { n: 0, cap: PROP_CAP }) }
+      : null;
+  }
+
+  if (want("response")) {
+    const responses = {};
+    for (const [code, res] of Object.entries(op.responses ?? {})) {
+      const c = pickContent(res.content);
+      responses[code] = {
+        description: res.description ?? "",
+        mediaType: c.mediaType,
+        schema: c.schema ? expand(spec, c.schema, 0, new Set(), { n: 0, cap: PROP_CAP }) : null,
+      };
+    }
+    out.responses = responses;
+  }
+
+  return out;
 }
 
 export function stats() {

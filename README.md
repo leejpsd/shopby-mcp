@@ -17,15 +17,18 @@
 
 ```
 shopby-api-bot/
-├─ cache-paths.mjs      # 캐시/번들 경로·호스트 매핑 (공유)
-├─ specs-index.json     # 카테고리 인덱스 — 오프라인/첫실행용 번들 폴백(원본은 원격 config.json)
+├─ cache-paths.mjs      # 캐시 경로·호스트 매핑 (공유)
+├─ specs-index.json     # 동봉되는 폴백 인덱스(파일 목록). 원격 config.json 을 못 받을 때만 사용
 ├─ download-specs.mjs   # 인덱스+yml 조건부 최신화 (refreshAll) + CLI 진입점
 ├─ shopby-index.mjs     # 핵심: yml 로드 + 평탄화 + 검색 + $ref 해석
 ├─ shopby-cli.mjs       # 터미널 검색/상세조회
 ├─ shopby-mcp.mjs       # MCP 서버 (Claude 연동, 시작 시 자동 최신화)
-├─ spec/                # 번들 폴백 seed (*.yml) — 런타임 캐시는 ~/.cache/shopby-mcp/
-└─ (런타임) ~/.cache/shopby-mcp/{spec/*.yml, specs-index.json, .etags.json}
+├─ spec/                # (gitignore·미배포) 로컬에서 받은 yml 임시본. 실제 런타임은 아래 캐시를 읽음
+└─ (런타임) ~/.cache/shopby-mcp/{spec/*.yml, specs-index.json, .etags.json}  ← yml 은 첫 실행 때 여기로 받음(네트워크 필요)
 ```
+
+> ⚠️ **yml 스펙은 npm 패키지에 동봉되지 않는다.** 첫 실행 때 원격에서 `~/.cache/shopby-mcp/`로 받는다(=네트워크 필요).
+> 동봉되는 건 `specs-index.json`(파일 목록) 하나뿐 — 원격 `config.json` 을 못 받을 때의 폴백 인덱스다.
 
 ## 설치 — Claude Code (권장: npx, 클론 불필요)
 
@@ -131,7 +134,8 @@ claude mcp add shopby-docs-dev -- node "$(pwd)/shopby-mcp.mjs"
 - MCP는 세션마다 새로 켜지므로, **새 Claude 세션을 열면 자동 반영**된다(실행 중 세션 도중엔 안 바뀜).
 - **새 모듈(새 yml 파일) 추가도 자동 발견**된다 — 인덱스를 함께 갱신하므로 새 파일명이 생기면 그 yml까지 자동으로 받는다.
 - 대부분 304라 빠르다. 변경/신규/실패 내역은 stderr에 로그된다.
-- 오프라인/장애 시엔 **캐시 → (캐시도 없으면) 패키지 동봉 seed** 로 조용히 폴백한다.
+- 오프라인/장애 시엔 **이미 받아둔 캐시**로 조용히 폴백한다. 인덱스(config.json)는 동봉 `specs-index.json` 으로 폴백.
+- **단, 캐시도 없는 첫 실행이 오프라인이면 0건이 된다**(동봉 yml seed 없음). 차단 환경이면 yml을 `~/.cache/shopby-mcp/spec/` 에 직접 넣으면 된다.
 
 **점검 주기(TTL):** 샵바이 스펙은 보통 **몇 주~한 달** 간격으로 바뀌므로, 세션마다 네트워크 점검하는 건 낭비다.
 그래서 기본 TTL이 **24시간**이다 — 마지막 점검이 24h 안이면 **네트워크 0회로 즉시 시작**하고, 24h이 지났을 때만 한 번 조건부 점검한다.

@@ -2,14 +2,10 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
-import { SPEC_DIR as CACHE_SPEC_DIR, BUNDLED_SPEC_DIR } from "./cache-paths.mjs";
+import { SPEC_DIR } from "./cache-paths.mjs";
 
-// 캐시(~/.cache/shopby-mcp/spec)를 우선 읽고, 비어 있으면 패키지 동봉본으로 폴백.
-function resolveSpecDir() {
-  if (existsSync(CACHE_SPEC_DIR) && readdirSync(CACHE_SPEC_DIR).some((f) => f.endsWith(".yml")))
-    return CACHE_SPEC_DIR;
-  return BUNDLED_SPEC_DIR;
-}
+// 스펙은 캐시(~/.cache/shopby-mcp/spec)에서만 읽는다. 비어 있으면 0건 — 첫 실행은 네트워크로 받아야 한다
+// (MCP는 기동 시, CLI는 첫 검색 시 자동으로 받음). 동봉 yml seed 는 없다.
 
 // ── 1. 모든 yml 로드 + 평탄화 ───────────────────────────────
 let SPECS = {};      // { filename: parsedSpec }  ($ref 해석용 원본 보관
@@ -18,7 +14,7 @@ let INDEX = [];      // 오퍼레이션 1개 = 레코드 1개
 function loadAll() {
   SPECS = {};
   INDEX = [];
-  const dir = resolveSpecDir();
+  const dir = SPEC_DIR;
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".yml")) : [];
   for (const file of files) {
     let spec;

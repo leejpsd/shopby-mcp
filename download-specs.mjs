@@ -6,12 +6,12 @@
 //
 //  - 스크립트 직접 실행: `node download-specs.mjs [--refresh]`  (--refresh 는 ETag 무시 전체 재다운로드)
 //  - 모듈 import:        `import { refreshAll } from "./download-specs.mjs"`
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, copyFileSync, realpathSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
 import { join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CACHE_DIR, SPEC_DIR, INDEX_FILE, ETAGS_FILE,
-  INDEX_URL, HOST_BY_CATEGORY, BUNDLED_INDEX, BUNDLED_SPEC_DIR,
+  INDEX_URL, HOST_BY_CATEGORY, BUNDLED_INDEX,
 } from "./cache-paths.mjs";
 
 const PER_REQUEST_TIMEOUT_MS = Number(process.env.SHOPBY_REQUEST_TIMEOUT_MS ?? 8000);
@@ -57,7 +57,7 @@ async function conditionalGet(url, prev, { force }) {
 }
 
 // ── (0) 인덱스(config.json) 갱신 → 항상 "사용할 인덱스 객체"를 돌려준다 ──
-//   200: 새로 저장 / 304·실패: 캐시본 사용 / 캐시도 없으면 번들 seed 로 폴백
+//   200: 새로 저장 / 304·실패: 캐시본 사용 / 캐시도 없으면 동봉 specs-index.json 으로 폴백
 async function refreshIndex(store, { force = false } = {}) {
   let changed = false;
   const r = await conditionalGet(INDEX_URL, store.entries[INDEX_KEY], { force });
@@ -73,14 +73,14 @@ async function refreshIndex(store, { force = false } = {}) {
     }
   }
 
-  // 사용할 인덱스 로드: 캐시 → 번들 seed 순
+  // 사용할 인덱스 로드: 캐시 → 동봉 specs-index.json 순
   let raw = null;
   if (existsSync(INDEX_FILE)) raw = readFileSync(INDEX_FILE, "utf-8");
   else if (existsSync(BUNDLED_INDEX)) {
     raw = readFileSync(BUNDLED_INDEX, "utf-8");
-    writeFileSync(INDEX_FILE, raw); // 번들본을 캐시에 시드
+    writeFileSync(INDEX_FILE, raw); // 동봉 인덱스를 캐시로 복사
   }
-  if (!raw) throw new Error("인덱스를 찾을 수 없음 (원격·캐시·번들 모두 없음)");
+  if (!raw) throw new Error("인덱스를 찾을 수 없음 (원격·캐시·동봉 모두 없음)");
   return { index: JSON.parse(raw), changed };
 }
 
@@ -123,31 +123,16 @@ async function refreshSpecs(index, store, { force = false } = {}) {
   return results;
 }
 
-// 캐시 spec 디렉터리가 비어있으면 번들 seed 를 복사해 둔다(오프라인 첫 실행 대비).
-function seedFromBundleIfEmpty() {
-  const hasYml = existsSync(SPEC_DIR) && readdirSync(SPEC_DIR).some((f) => f.endsWith(".yml"));
-  if (hasYml || !existsSync(BUNDLED_SPEC_DIR)) return 0;
-  mkdirSync(SPEC_DIR, { recursive: true });
-  let n = 0;
-  for (const f of readdirSync(BUNDLED_SPEC_DIR).filter((f) => f.endsWith(".yml"))) {
-    copyFileSync(join(BUNDLED_SPEC_DIR, f), join(SPEC_DIR, f));
-    n++;
-  }
-  return n;
-}
-
 /**
  * 인덱스 + yml 을 한 번에 최신화한다. 네트워크 실패는 조용히 무시하고 캐시로 진행.
- * @returns {Promise<{indexChanged:boolean, updated:string[], new:string[], unchanged:number,
- *   failed:{file:string,error:string}[], seeded:number, lastRefresh:string}>}
+ * 첫 실행은 네트워크 필요(동봉 yml seed 없음). config.json 을 못 받으면 동봉 specs-index.json 으로 폴백.
+ * @returns {Promise<{firstRun:boolean, indexChanged:boolean, updated:string[], new:string[],
+ *   unchanged:number, failed:{file:string,error:string}[], lastRefresh:string}>}
  */
 export async function refreshAll({ force = false } = {}) {
   mkdirSync(SPEC_DIR, { recursive: true });
   const store = loadEtags();
   const firstRun = Object.keys(store.entries).length === 0; // 이전 기록이 전혀 없음 = 최초 실행
-
-  // 오프라인 첫 실행 대비: 캐시가 비면 번들 seed 로 채워 둔다(이후 조건부 점검이 갱신).
-  const seeded = seedFromBundleIfEmpty();
 
   const { index, changed: indexChanged } = await refreshIndex(store, { force });
   const results = await refreshSpecs(index, store, { force });
@@ -162,7 +147,6 @@ export async function refreshAll({ force = false } = {}) {
     new: results.filter((r) => r.status === "new").map((r) => r.file),
     unchanged: results.filter((r) => r.status === "unchanged").length,
     failed: results.filter((r) => r.status === "failed").map((r) => ({ file: r.file, error: r.error })),
-    seeded,
     lastRefresh: store.lastRefresh,
   };
 }
@@ -172,7 +156,6 @@ async function main() {
   const force = process.argv.includes("--refresh");
   console.log(`샵바이 스펙 최신화${force ? " (--refresh: 전체 강제)" : ""} → ${CACHE_DIR}`);
   const s = await refreshAll({ force });
-  if (s.seeded) console.log(`  번들 seed 복사: ${s.seeded}개 (캐시가 비어 있었음)`);
   console.log(`  인덱스: ${s.indexChanged ? "갱신됨" : "변경 없음"}`);
   if (s.firstRun && s.new.length) console.log(`  ⬇ 최초 다운로드: ${s.new.length}개`);
   else if (s.new.length) console.log(`  ＋ 신규 발견: ${s.new.join(", ")}`);

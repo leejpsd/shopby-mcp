@@ -11,7 +11,7 @@ import { ETAGS_FILE } from "./cache-paths.mjs";
 // ── 시작 시 자동 최신화 ────────────────────────────────────────
 // MCP는 세션마다 새로 켜지므로, 여기서 한 번 점검하면 새 Claude 세션마다 자동 반영된다.
 //  - (0) 원격 config.json(인덱스) 조건부 갱신 → (1) 최신 인덱스 기준 yml 조건부 갱신 → 새 모듈도 자동 발견
-//  - 304가 대부분이라 빠름. 오프라인/장애 시엔 캐시(없으면 번들 seed)로 조용히 폴백
+//  - 304가 대부분이라 빠름. 오프라인/장애 시엔 받아둔 캐시로 조용히 폴백(인덱스는 동봉 specs-index.json)
 //  - 플래그: --refresh(전체 강제) / SHOPBY_MCP_NO_REFRESH=1(점검 끔) / SHOPBY_MCP_MAX_AGE=<초>(그 안엔 점검 생략)
 //  - 샵바이 스펙은 몇 주~한 달 주기로 바뀌므로 기본 TTL을 24h로 둔다 → 평상시 세션 시작은 네트워크 0회.
 //    "지금 당장 최신"이 필요하면 --refresh 또는 SHOPBY_MCP_MAX_AGE=0.
@@ -46,7 +46,6 @@ async function startupRefresh() {
   console.error(`[shopby-mcp] checking updates${FORCE ? " (--refresh: force)" : ""}…`);
   try {
     const s = await refreshAll({ force: FORCE }); // 각 요청 타임아웃 캡 → 전체도 사실상 캡
-    if (s.seeded) console.error(`[shopby-mcp] seeded ${s.seeded} spec(s) from bundle (cache was empty)`);
     if (s.indexChanged) console.error("[shopby-mcp] index (config.json) updated");
     if (s.firstRun && s.new.length) console.error(`[shopby-mcp] initial download: ${s.new.length} spec(s)`);
     else if (s.new.length) console.error(`[shopby-mcp] NEW module(s) discovered: ${s.new.join(", ")}`);
@@ -54,7 +53,7 @@ async function startupRefresh() {
     if (!s.new.length && !s.updated.length) console.error("[shopby-mcp] no spec changes");
     if (s.failed.length) console.error(`[shopby-mcp] ${s.failed.length} fetch failed — using cached for those`);
   } catch (e) {
-    console.error(`[shopby-mcp] refresh skipped (${e.message}) — using cached/bundled specs`);
+    console.error(`[shopby-mcp] refresh skipped (${e.message}) — using cached specs`);
   }
 }
 
@@ -62,6 +61,13 @@ await startupRefresh();
 
 // 최신화 후에 인덱스를 로드해야 변경분이 반영된다 (shopby-index 는 import 시점에 spec 을 읽음)
 const { search, getApi, stats, listTags, listApis } = await import("./shopby-index.mjs");
+
+// 첫 실행이 오프라인이면 캐시가 비어 0건이 될 수 있다 — 동봉 yml seed 가 없으므로 정직하게 안내한다.
+if (stats().operations === 0)
+  console.error(
+    "[shopby-mcp] ⚠ 스펙 0건 — 첫 실행엔 네트워크가 필요합니다(원격에서 다운로드). " +
+      "오프라인/차단 환경이면 yml을 직접 ~/.cache/shopby-mcp/spec/ 에 넣으세요."
+  );
 
 const server = new McpServer({ name: "shopby-api-docs", version: "1.0.0" });
 

@@ -83,6 +83,17 @@ const SYN_ENTRIES = Object.entries(SYNONYMS);
 const KO_GENERIC = new Set(["목록", "리스트", "조회", "검색"]);
 const KO_KEYS = Object.keys(SYNONYMS).filter((k) => !KO_GENERIC.has(k));
 
+// 불용어: 도메인어가 아닌 일반 기능어(한국어) + generic 조각(영어 camelCase 파편 등).
+// "여부·가능" 같은 기능어가 요약(가중치 5)에 매칭돼, "no" 같은 2글자 조각이 모든 {boardNo}에 매칭돼
+// 도메인어와 동등하게 점수를 가져가 오답 1위를 만들던 문제 → 가중치 0.1로 강등(완전 제거 대신 타이브레이크 신호는 남김).
+const STOPWORDS = new Set([
+  // 한국어 기능/구조어 (SYNONYMS 의 도메인 키는 제외)
+  "여부", "가능", "정보", "관련", "사용", "해당", "각각", "경우", "전체", "대상", "기준", "개별", "요청", "응답", "데이터", "항목", "내역",
+  "확인", "처리", "설정", "변경", "상세", "생성", "추가", "제거", "적용", "노출", "표시", "목록", "리스트", "조회", "검색", "등록", "수정", "삭제",
+  // 영어 generic / camelCase 파편
+  "no", "id", "type", "list", "url", "key", "code", "name", "date", "time", "count", "cnt", "yn", "info", "data", "item", "value", "status", "num", "seq", "idx", "get", "search", "page", "size", "sort",
+]);
+
 // 질의를 가중치 있는 검색어로 확장: 원어(1.0) + camelCase 분해(0.6) + 동의어 양방향(0.6) + 한글 합성어 분해(0.6)
 function expandQuery(q) {
   const best = new Map(); // term -> weight
@@ -113,7 +124,8 @@ function expandQuery(q) {
       }
     }
   }
-  return [...best.entries()].map(([term, w]) => ({ term, w }));
+  // 불용어는 0.1로 강등 — 도메인어(1.0)/조각(0.6)을 못 이기지만 동점 시 약한 타이브레이크는 됨
+  return [...best.entries()].map(([term, w]) => ({ term, w: STOPWORDS.has(term) ? Math.min(w, 0.1) : w }));
 }
 
 export function search(query, { category, limit = 10 } = {}) {

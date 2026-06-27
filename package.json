@@ -44,7 +44,8 @@
   "scripts": {
     "download": "node download-specs.mjs",
     "search": "node shopby-cli.mjs",
-    "mcp": "node shopby-mcp.mjs"
+    "mcp": "node shopby-mcp.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

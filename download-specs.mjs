@@ -6,7 +6,7 @@
 //
 //  - 스크립트 직접 실행: `node download-specs.mjs [--refresh]`  (--refresh 는 ETag 무시 전체 재다운로드)
 //  - 모듈 import:        `import { refreshAll } from "./download-specs.mjs"`
-import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -60,14 +60,18 @@ async function conditionalGet(url, prev, { force }) {
 //   200: 새로 저장 / 304·실패: 캐시본 사용 / 캐시도 없으면 동봉 specs-index.json 으로 폴백
 async function refreshIndex(store, { force = false } = {}) {
   let changed = false;
+  let remoteOk = false; // 원격 인덱스를 신뢰성 있게 받았는가(304 또는 유효 JSON 200). ghost prune 가드용.
   const r = await conditionalGet(INDEX_URL, store.entries[INDEX_KEY], { force });
-  if (r.status === "fetched") {
+  if (r.status === "unchanged") {
+    remoteOk = true; // 304 — 캐시 인덱스가 원격과 동일(현재값 확인됨)
+  } else if (r.status === "fetched") {
     // 유효한 JSON 인지 확인 후에만 캐시에 반영
     try {
       JSON.parse(r.buf.toString("utf-8"));
       writeFileSync(INDEX_FILE, r.buf);
       store.entries[INDEX_KEY] = { etag: r.etag ?? null, lastModified: r.lastModified ?? null };
       changed = true;
+      remoteOk = true;
     } catch {
       // 200인데 JSON 파싱 실패 = INDEX_URL이 HTML/리다이렉트를 주는 등 잘못된 상태.
       // 폴백되어 검색은 되지만 "새 모듈 자동 발견"이 영구히 침묵하므로 가시화한다.
@@ -86,7 +90,7 @@ async function refreshIndex(store, { force = false } = {}) {
     writeFileSync(INDEX_FILE, raw); // 동봉 인덱스를 캐시로 복사
   }
   if (!raw) throw new Error("인덱스를 찾을 수 없음 (원격·캐시·동봉 모두 없음)");
-  return { index: JSON.parse(raw), changed };
+  return { index: JSON.parse(raw), changed, remoteOk };
 }
 
 // 인덱스 → (호스트, 파일명) 작업목록. shop/server 만 (호스트 매핑이 있는 카테고리).
@@ -132,15 +136,29 @@ async function refreshSpecs(index, store, { force = false } = {}) {
  * 인덱스 + yml 을 한 번에 최신화한다. 네트워크 실패는 조용히 무시하고 캐시로 진행.
  * 첫 실행은 네트워크 필요(동봉 yml seed 없음). config.json 을 못 받으면 동봉 specs-index.json 으로 폴백.
  * @returns {Promise<{firstRun:boolean, indexChanged:boolean, updated:string[], new:string[],
- *   unchanged:number, failed:{file:string,error:string}[], lastRefresh:string}>}
+ *   unchanged:number, failed:{file:string,error:string}[], pruned:string[], lastRefresh:string}>}
  */
 export async function refreshAll({ force = false } = {}) {
   mkdirSync(SPEC_DIR, { recursive: true });
   const store = loadEtags();
   const firstRun = Object.keys(store.entries).length === 0; // 이전 기록이 전혀 없음 = 최초 실행
 
-  const { index, changed: indexChanged } = await refreshIndex(store, { force });
+  const { index, changed: indexChanged, remoteOk } = await refreshIndex(store, { force });
   const results = await refreshSpecs(index, store, { force });
+
+  // 원격 인덱스를 신뢰성 있게 받았을 때만, 인덱스에서 사라진 ghost yml 을 캐시에서 제거한다.
+  // (오프라인/폴백 인덱스로는 절대 안 지움 — 멀쩡한 캐시를 날릴 수 있으므로 remoteOk 가드 필수)
+  const pruned = [];
+  if (remoteOk) {
+    const jobFiles = new Set(buildJobs(index).map((j) => j.file));
+    for (const f of existsSync(SPEC_DIR) ? readdirSync(SPEC_DIR) : []) {
+      if (f.endsWith(".yml") && !jobFiles.has(f)) {
+        try { rmSync(join(SPEC_DIR, f)); } catch { /* 무시 */ }
+        delete store.entries[f];
+        pruned.push(f);
+      }
+    }
+  }
 
   store.lastRefresh = new Date().toISOString();
   saveEtags(store);
@@ -152,6 +170,7 @@ export async function refreshAll({ force = false } = {}) {
     new: results.filter((r) => r.status === "new").map((r) => r.file),
     unchanged: results.filter((r) => r.status === "unchanged").length,
     failed: results.filter((r) => r.status === "failed").map((r) => ({ file: r.file, error: r.error })),
+    pruned,
     lastRefresh: store.lastRefresh,
   };
 }
@@ -165,8 +184,9 @@ async function main() {
   if (s.firstRun && s.new.length) console.log(`  ⬇ 최초 다운로드: ${s.new.length}개`);
   else if (s.new.length) console.log(`  ＋ 신규 발견: ${s.new.join(", ")}`);
   if (s.updated.length) console.log(`  ↻ 갱신: ${s.updated.join(", ")}`);
+  if (s.pruned.length) console.log(`  🗑 제거(인덱스에서 사라짐): ${s.pruned.join(", ")}`);
   console.log(
-    `\n완료: 신규 ${s.new.length}, 갱신 ${s.updated.length}, 동일 ${s.unchanged}, 실패 ${s.failed.length}`
+    `\n완료: 신규 ${s.new.length}, 갱신 ${s.updated.length}, 동일 ${s.unchanged}, 제거 ${s.pruned.length}, 실패 ${s.failed.length}`
   );
   if (s.failed.length) console.log(`  실패: ${s.failed.map((f) => `${f.file}(${f.error})`).join(", ")}`);
 }

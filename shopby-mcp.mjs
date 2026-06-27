@@ -4,9 +4,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { refreshAll } from "./download-specs.mjs";
-import { ETAGS_FILE } from "./cache-paths.mjs";
+import { ETAGS_FILE, SPEC_DIR } from "./cache-paths.mjs";
 
 // ── 시작 시 자동 최신화 ────────────────────────────────────────
 // MCP는 세션마다 새로 켜지므로, 여기서 한 번 점검하면 새 Claude 세션마다 자동 반영된다.
@@ -29,12 +29,22 @@ function secondsSinceLastRefresh() {
   }
 }
 
+function hasCachedSpecs() {
+  try {
+    return existsSync(SPEC_DIR) && readdirSync(SPEC_DIR).some((f) => f.endsWith(".yml"));
+  } catch {
+    return false;
+  }
+}
+
 async function startupRefresh() {
   if (NO_REFRESH && !FORCE) {
     console.error("[shopby-mcp] refresh off (SHOPBY_MCP_NO_REFRESH=1) — using cache");
     return;
   }
-  if (!FORCE && MAX_AGE_SEC > 0) {
+  // TTL 게이트는 "캐시에 스펙이 있을 때만" 적용. 비었으면(오프라인 첫 실행 실패 등) lastRefresh 스탬프가
+  // 찍혀 있어도 무조건 재시도 → 사내망/프록시 차단 후 24h 락아웃 방지.
+  if (!FORCE && MAX_AGE_SEC > 0 && hasCachedSpecs()) {
     const age = secondsSinceLastRefresh();
     if (age < MAX_AGE_SEC) {
       console.error(
@@ -50,7 +60,8 @@ async function startupRefresh() {
     if (s.firstRun && s.new.length) console.error(`[shopby-mcp] initial download: ${s.new.length} spec(s)`);
     else if (s.new.length) console.error(`[shopby-mcp] NEW module(s) discovered: ${s.new.join(", ")}`);
     if (s.updated.length) console.error(`[shopby-mcp] updated ${s.updated.length}: ${s.updated.join(", ")}`);
-    if (!s.new.length && !s.updated.length) console.error("[shopby-mcp] no spec changes");
+    if (s.pruned?.length) console.error(`[shopby-mcp] removed ${s.pruned.length} stale spec(s): ${s.pruned.join(", ")}`);
+    if (!s.new.length && !s.updated.length && !s.pruned?.length) console.error("[shopby-mcp] no spec changes");
     if (s.failed.length) console.error(`[shopby-mcp] ${s.failed.length} fetch failed — using cached for those`);
   } catch (e) {
     console.error(`[shopby-mcp] refresh skipped (${e.message}) — using cached specs`);
@@ -63,10 +74,12 @@ await startupRefresh();
 const { search, getApi, stats, listTags, listApis } = await import("./shopby-index.mjs");
 
 // 첫 실행이 오프라인이면 캐시가 비어 0건이 될 수 있다 — 동봉 yml seed 가 없으므로 정직하게 안내한다.
+// (캐시가 비면 TTL을 무시하므로 다음 세션마다 자동 재시도된다 — 락아웃 없음)
 if (stats().operations === 0)
   console.error(
     "[shopby-mcp] ⚠ 스펙 0건 — 첫 실행엔 네트워크가 필요합니다(원격에서 다운로드). " +
-      "오프라인/차단 환경이면 yml을 직접 ~/.cache/shopby-mcp/spec/ 에 넣으세요."
+      "네트워크가 되면 다음 세션에서 자동 재시도하며, 지금 강제하려면 --refresh. " +
+      "차단 환경이면 yml을 직접 ~/.cache/shopby-mcp/spec/ 에 넣으세요."
   );
 
 const server = new McpServer({ name: "shopby-api-docs", version: "1.0.0" });

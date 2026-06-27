@@ -99,7 +99,8 @@ function expandQuery(q) {
   const best = new Map(); // term -> weight
   const add = (term, w) => {
     term = String(term).toLowerCase();
-    if (term.length < 2) return;
+    // 1글자 영문/숫자는 노이즈라 버리되, 1글자 한글(찜·몰 등)은 유효 형태소라 살린다
+    if (term.length < 2 && !/[가-힣]/.test(term)) return;
     if ((best.get(term) ?? 0) < w) best.set(term, w);
   };
   for (const word of q.split(/[\s,/]+/).filter(Boolean)) {

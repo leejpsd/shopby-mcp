@@ -84,9 +84,9 @@ server.registerTool(
     inputSchema: {
       query: z.string().describe("검색어 (한국어 가능)"),
       category: z
-        .enum(["shop", "admin", "server", "internal"])
+        .enum(["shop", "server"])
         .optional()
-        .describe("스펙 영역 필터. shop=프론트호출용, admin=관리자, server=서버연동, internal=내부"),
+        .describe("스펙 영역 필터. shop=프론트 호출용, server=서버 연동용 (admin/internal은 미수집이라 선택지에 없음)"),
       limit: z.number().int().min(1).max(30).default(10).optional(),
     },
   },

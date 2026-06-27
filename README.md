@@ -16,7 +16,7 @@
 ## 구성
 
 ```
-shopby-api-bot/
+shopby-mcp/
 ├─ cache-paths.mjs      # 캐시 경로·호스트 매핑 (공유)
 ├─ specs-index.json     # 동봉되는 폴백 인덱스(파일 목록). 원격 config.json 을 못 받을 때만 사용
 ├─ download-specs.mjs   # 인덱스+yml 조건부 최신화 (refreshAll) + CLI 진입점

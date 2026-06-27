@@ -69,7 +69,12 @@ async function refreshIndex(store, { force = false } = {}) {
       store.entries[INDEX_KEY] = { etag: r.etag ?? null, lastModified: r.lastModified ?? null };
       changed = true;
     } catch {
-      // 깨진 응답이면 무시하고 캐시 사용
+      // 200인데 JSON 파싱 실패 = INDEX_URL이 HTML/리다이렉트를 주는 등 잘못된 상태.
+      // 폴백되어 검색은 되지만 "새 모듈 자동 발견"이 영구히 침묵하므로 가시화한다.
+      console.error(
+        `[shopby] ⚠ 인덱스 응답이 JSON이 아님 — INDEX_URL(${INDEX_URL})이 잘못됐을 수 있음. ` +
+          `폴백 인덱스로 검색은 되지만 '새 모듈 자동 발견'은 동작하지 않음.`
+      );
     }
   }
 
